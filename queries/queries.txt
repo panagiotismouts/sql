@@ -1,0 +1,172 @@
+NON SPATIAL
+1) the count of the number of incidents where the maintenance
+was not successful and thus happened more
+incidents.
+
+SELECT inc."location", COUNT(*) as num_incidents
+FROM "Spatial_US_Mapping"."Traffic_Incidents" as inc
+JOIN "Spatial_US_Mapping"."Maintenance" as main ON inc."location" = main."location"
+WHERE inc."time" > main."time"
+GROUP BY inc."location";
+
+2)how many incidents occured past maintenance 
+and how many locations had that many incidents.
+
+SELECT num_incidents, COUNT(*) as num_locations
+FROM (
+	SELECT inc."location", COUNT(*) as num_incidents
+	FROM "Spatial_US_Mapping"."Traffic_Incidents" as inc
+	JOIN "Spatial_US_Mapping"."Maintenance" as main ON inc."location" = main."location"
+	WHERE inc."time" > main."time"
+	GROUP BY inc."location"
+) as subquery
+GROUP BY num_incidents
+ORDER BY num_incidents DESC;
+
+3)average accident time
+SELECT AVG(inc."time") as "Average Accident after Maintenance"
+FROM "Spatial_US_Mapping"."Traffic_Incidents" as inc
+JOIN "Spatial_US_Mapping"."Maintenance" as main ON inc."location" = main."location";
+
+4)how many diesel cars are to each county, if there are any.
+
+SELECT Count(*) as Num_of_Diesels , county."namelsad"
+FROM "Spatial_US_Mapping"."US_State_Vehicle" as vehicle
+JOIN "Spatial_US_Mapping"."CountiesAndEquivalent" as county ON county."gid" = vehicle."countiesandequivalentgid"
+WHERE vehicle."fuel_type" = 'Diesel'
+GROUP BY county."namelsad"
+ORDER BY Num_of_Diesels DESC;
+
+5)percentage of accidents per county.
+
+SELECT CAST((accidentspercounty*100.0/totalaccidents) AS DECIMAL(10,2)) as percentage_of_accidents_per_county, cname
+FROM
+(SELECT COUNT(*) as AccidentsPerCounty, county."namelsad" as cname
+FROM "Spatial_US_Mapping"."PrimaryRoads" as pr
+JOIN "Spatial_US_Mapping"."Traffic_Incidents" as ti 
+ON pr."gid" = ti."primaryroadsgid"
+JOIN "Spatial_US_Mapping"."CountiesAndEquivalent_PrimaryRoads" as copr
+ON copr."primaryroadsgid" = pr."gid"
+JOIN "Spatial_US_Mapping"."CountiesAndEquivalent" as county
+ON county."gid" = copr."countiesandequivalentgid"
+GROUP BY cname) as accPC
+CROSS JOIN (
+	SELECT COUNT(pr."gid") as totalaccidents
+	FROM "Spatial_US_Mapping"."PrimaryRoads" as pr
+	JOIN "Spatial_US_Mapping"."Traffic_Incidents" as ti 
+	ON pr."gid" = ti."primaryroadsgid"
+	JOIN "Spatial_US_Mapping"."CountiesAndEquivalent_PrimaryRoads" as copr
+	ON copr."primaryroadsgid" = pr."gid"
+	JOIN "Spatial_US_Mapping"."CountiesAndEquivalent" as county
+	ON county."gid" = copr."countiesandequivalentgid"
+) as sub
+order by percentage_of_accidents_per_county DESC;
+
+6)view that ranks the maintenances based on
+the type of maintenance that happens on the same road.
+if a maintenance happens more than three times on the road,
+it gets marked and added to the view.
+
+CREATE VIEW Top_Maintenance_Activities_By_Primary_Road AS
+SELECT p."fullname" AS Primary_Road_Name, m."type" AS Maintenance_Type, COUNT(*) AS Frequency
+FROM "Spatial_US_Mapping"."Maintenance" m
+JOIN "Spatial_US_Mapping"."PrimaryRoads" p ON m."primaryroadsgid" = p."gid"
+GROUP BY p."fullname", m."type"
+HAVING COUNT(*) >= 3
+ORDER BY p."fullname", COUNT(*) DESC;
+
+7)number of congressional districts per state
+SELECT COUNT(*) as Number_of_CongressionalDistricts_per_State, dstr."statefp"
+FROM "Spatial_US_Mapping"."CountiesAndEquivalent" as county
+JOIN "Spatial_US_Mapping"."CongressionalDistricts" as dstr
+ON county."statefp" = dstr."statefp"
+GROUP BY dstr."statefp"
+ORDER BY dstr."statefp" ASC
+
+SPATIAL QUERIES
+
+1. The roads that touch any Urban Areas.
+
+SELECT DISTINCT uac20.name20 AS urban_area_name, roads.fullname AS road_name
+FROM tl_2020_us_primaryroads AS roads
+JOIN tl_2020_us_uac20 AS uac20
+ON st_touches(st_transform(roads.geom, 4326), uac20.geom)
+ORDER BY road_name;
+
+2. The roads that connect two Urban Areas.
+SELECT ua1.name20 AS urban_area_1,r.fullname AS road_name, ua2.name20 AS urban_area_2
+FROM tl_2020_us_primaryroads AS r
+JOIN tl_2020_us_uac20 AS ua1
+ON ST_Intersects(ST_Transform(r.geom, 4326), ua1.geom)
+JOIN tl_2020_us_uac20 AS ua2
+ON ST_Intersects(ST_Transform(r.geom, 4326), ua2.geom) AND ua1.geoid20 <> ua2.geoid20;
+
+3)insert
+
+4)print the total area of every urban area
+SELECT st_area(st_transform(ua."geom", 26910)) as emvadon, ua."namelsad"
+FROM "Spatial_US_Mapping"."UrbanAreas" ua
+ORDER BY emvadon DESC
+
+5)ids of primary roads that connect urban areas and
+counties
+
+SELECT pr."gid" as RoadIDs_connecting_UAs_and_Counties
+FROM "Spatial_US_Mapping"."UrbanAreas" ua
+JOIN "Spatial_US_Mapping"."PrimaryRoads_UrbanAreas" prua
+ON ua."gid" = prua."urbanareasgid"
+JOIN "Spatial_US_Mapping"."CountiesAndEquivalent_PrimaryRoads" prc
+ON prua."primaryroadsgid" = prc."primaryroadsgid"
+JOIN "Spatial_US_Mapping"."PrimaryRoads" pr
+ON pr."gid" = prc."primaryroadsgid"
+JOIN "Spatial_US_Mapping"."CountiesAndEquivalent" county
+ON county."gid" = prc."primaryroadsgid"
+WHERE st_intersects(ua."geom", pr."geom") AND st_intersects(county."geom", pr."geom")
+
+6)the road that has the shortest distance from each county.
+SELECT
+  c."namelsad",
+  r."fullname",
+  ST_Distance(c."geom", r."geom") AS distance
+FROM
+  "Spatial_US_Mapping"."CountiesAndEquivalent" AS c
+CROSS JOIN LATERAL (
+  SELECT
+    r."fullname",
+    r."geom"
+  FROM
+    "Spatial_US_Mapping"."PrimaryRoads" AS r
+  JOIN
+    "Spatial_US_Mapping"."CountiesAndEquivalent_PrimaryRoads" AS cr ON r."gid" = cr."primaryroadsgid"
+  WHERE
+    cr."countiesandequivalentgid" = c."gid"
+  ORDER BY
+    c."geom" <-> r."geom"
+  LIMIT
+    1
+) AS r;
+
+7)determine if an entire railroad area is inside a county.
+return a true or a false.
+
+SELECT
+  c."namelsad",
+  r."fullname",
+  ST_Contains(c."geom", r."geom") AS contain
+FROM
+  "Spatial_US_Mapping"."CountiesAndEquivalent" AS c
+CROSS JOIN LATERAL (
+  SELECT
+    r."fullname",
+    r."geom"
+  FROM
+    "Spatial_US_Mapping"."PrimaryRoads" AS r
+  JOIN
+    "Spatial_US_Mapping"."CountiesAndEquivalent_PrimaryRoads" AS cr ON r."gid" = cr."primaryroadsgid"
+  WHERE
+    cr."countiesandequivalentgid" = c."gid"
+  ORDER BY
+    c."geom" <-> r."geom"
+) AS r;
+
+
